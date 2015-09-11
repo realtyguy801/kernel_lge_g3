@@ -230,7 +230,7 @@
 		qcom,camera_rev_b@20 {
 			status = "ok";
 			compatible = "qcom,imx135";
-			revision = "rev_a1...";
+			revision = "rev_b...";
 			reg = <0x20 0x0>;
 			qcom,slave-id = <0x20 0x16 0x135>;
 			qcom,csiphy-sd-index = <0>;
@@ -322,7 +322,7 @@
 		qcom,camera_rev_b@6e {
 			status = "ok";
 			compatible = "qcom,imx208";
-			revision = "rev_a1...";
+			revision = "rev_b...";
 			reg = <0x6e 0x0>;
 			qcom,slave-id = <0x6e 0x0 0x208>;
 			qcom,csiphy-sd-index = <2>;
