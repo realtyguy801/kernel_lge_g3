@@ -4651,6 +4651,7 @@ do_more:
 			 * We use a retry loop because
 			 * ext4_free_blocks() is not allowed to fail.
 			 */
+			ext4_mb_unload_buddy(&e4b);
 			cond_resched();
 			congestion_wait(BLK_RW_ASYNC, HZ/50);
 			goto retry;
