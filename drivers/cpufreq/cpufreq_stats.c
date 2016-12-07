@@ -41,7 +41,7 @@ struct cpufreq_stats {
 	unsigned int max_state;
 	unsigned int state_num;
 	unsigned int last_index;
-	cputime64_t *time_in_state;
+	u64 *time_in_state;
 	unsigned int *freq_table;
 #ifdef CONFIG_CPU_FREQ_STAT_DETAILS
 	unsigned int *trans_table;
@@ -50,7 +50,7 @@ struct cpufreq_stats {
 
 struct all_cpufreq_stats {
 	unsigned int state_num;
-	cputime64_t *time_in_state;
+	u64 *time_in_state;
 	unsigned int *freq_table;
 };
 
@@ -322,6 +322,10 @@ static void cpufreq_stats_free_table(unsigned int cpu)
 static void cpufreq_stats_free_sysfs(unsigned int cpu)
 {
 	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+
+	if (!cpufreq_frequency_get_table(cpu))
+		return;
+
 	if (policy && policy->cpu == cpu)
 		sysfs_remove_group(&policy->kobj, &stats_attr_group);
 	if (policy)
@@ -396,7 +400,7 @@ static int cpufreq_stats_create_table(struct cpufreq_policy *policy,
 	per_cpu(cpufreq_stats_table, cpu) = stat;
 
 
-	alloc_size = count * sizeof(int) + count * sizeof(cputime64_t);
+	alloc_size = count * sizeof(int) + count * sizeof(u64);
 
 #ifdef CONFIG_CPU_FREQ_STAT_DETAILS
 	alloc_size += count * count * sizeof(int);
@@ -509,18 +513,6 @@ static void create_all_freq_table(void)
 	return;
 }
 
-static void free_all_freq_table(void)
-{
-	if (all_freq_table) {
-		if (all_freq_table->freq_table) {
-			kfree(all_freq_table->freq_table);
-			all_freq_table->freq_table = NULL;
-		}
-		kfree(all_freq_table);
-		all_freq_table = NULL;
-	}
-}
-
 static void add_all_freq_table(unsigned int freq)
 {
 	unsigned int size;
@@ -551,7 +543,7 @@ static void cpufreq_allstats_create(unsigned int cpu,
 	}
 
 	/*Allocate memory for freq table per cpu as well as clockticks per freq*/
-	alloc_size = count * sizeof(int) + count * sizeof(cputime64_t);
+	alloc_size = count * sizeof(int) + count * sizeof(u64);
 	all_stat->time_in_state = kzalloc(alloc_size, GFP_KERNEL);
 	if (!all_stat->time_in_state) {
 		pr_warn("Cannot allocate memory for cpufreq time_in_state\n");
@@ -737,14 +729,11 @@ static int __init cpufreq_stats_init(void)
 	if (ret)
 		return ret;
 
-	create_all_freq_table();
-
 	ret = cpufreq_register_notifier(&notifier_trans_block,
 				CPUFREQ_TRANSITION_NOTIFIER);
 	if (ret) {
 		cpufreq_unregister_notifier(&notifier_policy_block,
 				CPUFREQ_POLICY_NOTIFIER);
-		free_all_freq_table();
 		return ret;
 	}
 
@@ -753,6 +742,7 @@ static int __init cpufreq_stats_init(void)
 		cpufreq_update_policy(cpu);
 	}
 
+	create_all_freq_table();
 	ret = sysfs_create_file(cpufreq_global_kobject,
 			&_attr_all_time_in_state.attr);
 	if (ret)

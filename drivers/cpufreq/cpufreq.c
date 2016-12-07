@@ -342,10 +342,8 @@ void cpufreq_notify_transition(struct cpufreq_freqs *freqs, unsigned int state)
 		trace_cpu_frequency(freqs->new, freqs->cpu);
 		srcu_notifier_call_chain(&cpufreq_transition_notifier_list,
 				CPUFREQ_POSTCHANGE, freqs);
-		if (likely(policy) && likely(policy->cpu == freqs->cpu)) {
+		if (likely(policy) && likely(policy->cpu == freqs->cpu))
 			policy->cur = freqs->new;
-			sysfs_notify(&policy->kobj, NULL, "scaling_cur_freq");
-		}
 		break;
 	}
 }
@@ -449,10 +447,21 @@ show_one(cpuinfo_max_freq, cpuinfo.max_freq);
 show_one(cpuinfo_transition_latency, cpuinfo.transition_latency);
 show_one(scaling_min_freq, min);
 show_one(scaling_max_freq, max);
-show_one(scaling_cur_freq, cur);
 show_one(cpu_utilization, util);
 show_one(policy_min_freq, user_policy.min);
 show_one(policy_max_freq, user_policy.max);
+
+static ssize_t show_scaling_cur_freq(
+	struct cpufreq_policy *policy, char *buf)
+{
+	ssize_t ret;
+
+	if (cpufreq_driver && cpufreq_driver->setpolicy && cpufreq_driver->get)
+		ret = sprintf(buf, "%u\n", cpufreq_driver->get(policy->cpu));
+	else
+		ret = sprintf(buf, "%u\n", policy->cur);
+	return ret;
+}
 
 static int __cpufreq_set_policy(struct cpufreq_policy *data,
 				struct cpufreq_policy *policy);
@@ -464,7 +473,7 @@ static int __cpufreq_set_policy(struct cpufreq_policy *data,
 static ssize_t store_##file_name					\
 (struct cpufreq_policy *policy, const char *buf, size_t count)		\
 {									\
-	unsigned int ret;						\
+	unsigned int ret = 0;						\
 	struct cpufreq_policy new_policy;				\
 	int mpd = strcmp(current->comm, "mpdecision");			\
 									\
@@ -856,11 +865,11 @@ static int cpufreq_add_dev_interface(unsigned int cpu,
 		if (ret)
 			goto err_out_kobj_put;
 	}
-	if (cpufreq_driver->target) {
-		ret = sysfs_create_file(&policy->kobj, &scaling_cur_freq.attr);
-		if (ret)
-			goto err_out_kobj_put;
-	}
+
+	ret = sysfs_create_file(&policy->kobj, &scaling_cur_freq.attr);
+	if (ret)
+		goto err_out_kobj_put;
+
 	if (cpufreq_driver->bios_limit) {
 		ret = sysfs_create_file(&policy->kobj, &bios_limit.attr);
 		if (ret)
@@ -1566,7 +1575,108 @@ int cpufreq_unregister_notifier(struct notifier_block *nb, unsigned int list)
 }
 EXPORT_SYMBOL(cpufreq_unregister_notifier);
 
+#if defined(CONFIG_LGE_LOW_BATT_LIMIT)
+#define BOOT_ARGS "chosen"
+static long	soc = 0;
+#include <linux/of.h>
 
+static int parse_batt_soc_bootarg(void)
+{
+	struct device_node *chosen_node;
+	static const char *cmd_line;
+	int rc = 0, len = 0, name_len = 0, cmd_len = 0;
+	char batt_soc[3] = {0,};
+	char *sidx, *eidx;
+	chosen_node = of_find_node_by_name(NULL, BOOT_ARGS);
+	if (!chosen_node) {
+		pr_err("%s: get chosen node failed\n", __func__);
+		return -ENODEV;
+	}
+
+	cmd_line = of_get_property(chosen_node, "bootargs", &len);
+	if (!cmd_line || len <= 0) {
+		pr_err("%s: get bootargs failed\n", __func__);
+		return -ENODEV;
+	}
+
+	name_len = strlen("batt.soc=");
+	cmd_len = strlen(cmd_line);
+	sidx = strnstr(cmd_line, "batt.soc=", cmd_len);
+	if (!sidx) {
+		pr_err("failed batt soc from boot command\n");
+		return -ENODEV;
+	}
+	sidx += name_len;
+
+	eidx = strnstr(sidx, " ", 10);
+
+	if (!eidx) {
+		eidx = sidx + strlen(sidx) + 1;
+	}
+
+	if (eidx <= sidx) {
+		return -ENODEV;
+	}
+
+	*eidx = 0;
+	len = eidx - sidx + 1;
+	if (len <= 0) {
+		return -ENODEV;
+	}
+
+	strncpy(batt_soc, sidx, strlen(sidx));
+	of_node_put(chosen_node);
+	if (strict_strtol(batt_soc, 10, &soc) != 0) {
+		return -ENODEV;
+	}
+
+	return rc;
+}
+
+#define MAX_CPUS (4)
+#define LOW_BATT_LIMIT_THRESHOLD (5)
+#define PREV_FREQ_INDEX			(2)
+typedef struct low_battery_llimit {
+	struct cpufreq_frequency_table *table;
+	int	last_cpufreq_index;
+}low_batt_limitation;
+static  low_batt_limitation low_battery_limit[MAX_CPUS];
+static int out_low_battery_limit = 0;
+static int set_clear_limit(const char *val, struct kernel_param *kp)
+{
+	int ret = 0;
+	ret = param_set_int(val, kp);
+	if (ret) {
+		pr_err("error setting value %d\n", ret);
+		return ret;
+	}
+	out_low_battery_limit = 1;
+	pr_info(" low batt limitation is clear by thermal\n");
+	return ret;
+}
+
+module_param_call(out_low_battery_limit, set_clear_limit,
+	param_get_int, &out_low_battery_limit, 0644);
+
+static void init_freq_table(void)
+{
+	int cpu_i , freq_i;
+	for( cpu_i = 0 ; cpu_i < MAX_CPUS; cpu_i++) {
+		low_battery_limit[cpu_i].table = 0;
+		low_battery_limit[cpu_i].last_cpufreq_index = 0;
+
+		low_battery_limit[cpu_i].table = cpufreq_frequency_get_table(cpu_i);
+		if(low_battery_limit[cpu_i].table > 0) {
+			for (freq_i = 0; (low_battery_limit[cpu_i].table[freq_i].frequency != CPUFREQ_TABLE_END); freq_i++) {
+				low_battery_limit[cpu_i].last_cpufreq_index = freq_i;
+				if (low_battery_limit[cpu_i].table[freq_i].frequency == CPUFREQ_ENTRY_INVALID) {
+					continue;
+				}
+			}
+		}
+	}
+}
+#endif
 /*********************************************************************
  *                              GOVERNORS                            *
  *********************************************************************/
@@ -1578,10 +1688,16 @@ int __cpufreq_driver_target(struct cpufreq_policy *policy,
 {
 	int retval = -EINVAL;
 	unsigned int old_target_freq = target_freq;
-
+#if defined(CONFIG_LGE_LOW_BATT_LIMIT)
+	int update_index = 0;
+#endif
 	if (cpufreq_disabled())
 		return -ENODEV;
-
+#if defined(CONFIG_LGE_LOW_BATT_LIMIT)
+	if(!low_battery_limit[policy->cpu].table) {
+		init_freq_table();
+	}
+#endif
 	/* Make sure that target_freq is within supported range */
 	if (target_freq > policy->max)
 		target_freq = policy->max;
@@ -1589,8 +1705,25 @@ int __cpufreq_driver_target(struct cpufreq_policy *policy,
 		target_freq = policy->min;
 
 	pr_debug("target for CPU %u: %u kHz, relation %u, requested %u kHz\n",
-                    policy->cpu, target_freq, relation, old_target_freq);
+			policy->cpu, target_freq, relation, old_target_freq);
 
+	if (target_freq == policy->cur)
+		return 0;
+
+#if defined(CONFIG_LGE_LOW_BATT_LIMIT)
+	if(policy->max == target_freq && soc <= LOW_BATT_LIMIT_THRESHOLD
+		&& !out_low_battery_limit) {
+		// limit to previous freq.
+		update_index = (low_battery_limit[policy->cpu].last_cpufreq_index) - PREV_FREQ_INDEX;
+		if (low_battery_limit[policy->cpu].table > 0 &&
+			update_index >= 0) {
+			target_freq = low_battery_limit[policy->cpu].table[--update_index].frequency;
+		} else {
+			pr_info("low_limit_table is still NULL== %u\n",target_freq);
+		}
+		pr_info("target for CPU %u: %u kHz, soc %ld\n", policy->cpu, target_freq, soc);
+	}
+#endif
 	if (cpu_online(policy->cpu) && cpufreq_driver->target)
 		retval = cpufreq_driver->target(policy, target_freq, relation);
 
@@ -2226,6 +2359,9 @@ static int __init cpufreq_core_init(void)
 
 	cpufreq_global_kobject = kobject_create_and_add("cpufreq", &cpu_subsys.dev_root->kobj);
 	BUG_ON(!cpufreq_global_kobject);
+#if defined(CONFIG_LGE_LOW_BATT_LIMIT)
+	parse_batt_soc_bootarg();
+#endif
 
 	/* create cpufreq kset */
 	cpufreq_kset = kset_create_and_add("kset", NULL, cpufreq_global_kobject);
