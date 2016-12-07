@@ -75,4 +75,3 @@ obj-$(CONFIG_EARJACK_DEBUGGER) += lge_earjack_debugger.o
 obj-$(CONFIG_BU52031NVX) += pm8xxx-cradle.o
 obj-$(CONFIG_TSPDRV) += tspdrv/
 obj-$(CONFIG_UID_CPUTIME) 	+= uid_cputime.o
-obj-y				+= sound_control.o
