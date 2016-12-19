@@ -4443,15 +4443,6 @@ static int taiko_volatile(struct snd_soc_codec *ssc, unsigned int reg)
 	if (reg == TAIKO_A_RX_HPH_CNP_EN)
 		return 1;
 
-#ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
-	/* HPH gain registers */
-	if (snd_pa_ctrl_locked) {
-		if (reg == TAIKO_A_RX_HPH_L_GAIN ||
-				reg == TAIKO_A_RX_HPH_R_GAIN)
-			return 1;
-	}
-#endif
-
 	if (reg == TAIKO_A_MBHC_INSERT_DET_STATUS)
 		return 1;
 
@@ -4485,53 +4476,13 @@ extern void snd_hax_cache_write(unsigned int, unsigned int);
 #ifndef CONFIG_SOUND_CONTROL_HAX_3_GPL
 static
 #endif
-int taiko_write(struct snd_soc_codec *codec, unsigned int reg,
-	unsigned int value)
-{
-	int ret;
-	struct wcd9xxx *wcd9xxx;
-
-	if (!codec)
-		return 0;
-
-	wcd9xxx = codec->control_data;
-
-	if (reg == SND_SOC_NOPM)
-		return 0;
-
-	BUG_ON(reg > TAIKO_MAX_REGISTER);
-
-	if (!taiko_volatile(codec, reg)) {
-		ret = snd_soc_cache_write(codec, reg, value);
-		if (ret != 0)
-			dev_err(codec->dev, "Cache write to %x failed: %d\n",
-				reg, ret);
-	}
-
-#ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
-	/* In case of no reg access, override with cache value. */
-	if (!snd_hax_reg_access(reg) &&
-			snd_hax_cache_read(reg) != -1)
-		value = snd_hax_cache_read(reg);
-	else
-		snd_hax_cache_write(reg, value);
-#endif
-	return wcd9xxx_reg_write(&wcd9xxx->core_res, reg, value);
-}
-#ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
-EXPORT_SYMBOL(taiko_write);
-#endif
-
-#ifndef CONFIG_SOUND_CONTROL_HAX_3_GPL
-static
-#endif
 unsigned int taiko_read(struct snd_soc_codec *codec,
 				unsigned int reg)
 {
 	unsigned int val;
 	int ret;
-    struct wcd9xxx *wcd9xxx;
-    
+	struct wcd9xxx *wcd9xxx;
+
 	if (!codec)
 		return 0;
 
@@ -4557,6 +4508,46 @@ unsigned int taiko_read(struct snd_soc_codec *codec,
 }
 #ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
 EXPORT_SYMBOL(taiko_read);
+#endif
+
+#ifndef CONFIG_SOUND_CONTROL_HAX_3_GPL
+static
+#endif
+int taiko_write(struct snd_soc_codec *codec, unsigned int reg,
+	unsigned int value)
+{
+	int ret;
+	struct wcd9xxx *wcd9xxx;
+
+	if (!codec)
+		return 0;
+
+	wcd9xxx = codec->control_data;
+
+	if (reg == SND_SOC_NOPM)
+		return 0;
+
+	BUG_ON(reg > TAIKO_MAX_REGISTER);
+
+	if (!taiko_volatile(codec, reg)) {
+		ret = snd_soc_cache_write(codec, reg, value);
+		if (ret != 0)
+			dev_err(codec->dev, "Cache write to %x failed: %d\n",
+				reg, ret);
+	}
+
+#ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
+	/* In case of no reg access, override with cache value */
+	if (!snd_hax_reg_access(reg) &&
+			snd_hax_cache_read(reg) != -1)
+		value = snd_hax_cache_read(reg);
+	else
+		snd_hax_cache_write(reg, value);
+#endif
+	return wcd9xxx_reg_write(&wcd9xxx->core_res, reg, value);
+}
+#ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
+EXPORT_SYMBOL(taiko_write);
 #endif
 
 static int taiko_startup(struct snd_pcm_substream *substream,
@@ -7302,9 +7293,10 @@ static int taiko_codec_probe(struct snd_soc_codec *codec)
 	struct wcd9xxx_core_resource *core_res;
 
 #ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
-	pr_info("probing taiko codec...\n");
+	pr_info("taiko codec probe...\n");
 	fauxsound_codec_ptr = codec;
 #endif
+
 	codec->control_data = dev_get_drvdata(codec->dev->parent);
 	control = codec->control_data;
 
@@ -7314,7 +7306,6 @@ static int taiko_codec_probe(struct snd_soc_codec *codec)
 	else
 		wcd9xxx_hw_revision = 2;
 #endif
-
 	wcd9xxx_ssr_register(control, taiko_device_down,
 			     taiko_post_reset_cb, (void *)codec);
 
